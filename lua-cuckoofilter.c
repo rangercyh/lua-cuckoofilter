@@ -12,6 +12,9 @@
 
 #define MT_NAME ("_cuckoofilter_metatable")
 
+#define LEFT_SHIFT(x, b, limit) ((b) < (limit) ? ((x) << (b)) : (0))
+#define RIGHT_SHIFT(x, b, limit) ((b) < (limit) ? ((x) >> (b)) : (0))
+
 // maximum number of cuckoo kicks before claiming failure
 #define MAX_CUCKOO_COUNT 500
 // all buckets = 4 half sort table situation
@@ -181,10 +184,7 @@ index_hash(uint32_t hv, size_t num_buckets) {
 
 static inline uint32_t
 tag_hash(uint32_t hv, size_t bits_per_item) {
-    uint32_t tag;
-    tag = hv & ((1ULL << bits_per_item) - 1);
-    tag += (tag == 0);
-    return tag;
+    return hv % (LEFT_SHIFT(1ULL, bits_per_item, 32) - 1) + 1;
 }
 
 static inline void
@@ -285,22 +285,21 @@ read_bucket(CuckooTable *ct, size_t i, uint32_t *tags) {
         for (size_t k1 = 0; k1 < bytes; k1++) {
             p = buckets + ((bits_per_bucket * i) >> 3) + k1;
             if (k1 < BYTES_PER_UINT64) {
-                u1 |= (uint64_t)(*((uint8_t *)p)) << (k1 * BITS_PER_BYTE);
+                u1 |= (uint64_t)LEFT_SHIFT((uint64_t)(*((uint8_t *)p)), k1 * BITS_PER_BYTE, 64);
             } else {
-                u2 |= (uint64_t)(*((uint8_t *)p)) << ((k1 - BYTES_PER_UINT64) * BITS_PER_BYTE);
+                u2 |= (uint64_t)LEFT_SHIFT((uint64_t)(*((uint8_t *)p)), (k1 - BYTES_PER_UINT64) * BITS_PER_BYTE, 64);
             }
         }
         codeword = (uint16_t)(u1 >> rshift) & 0x0fff;
-
         size_t bits_per_tag = ct->bits_per_tag;
         int shift;
         for (size_t k2 = 0; k2 < TAGS_PER_TABLE; k2++) {
-            tags[k2] = (uint32_t)(u1 >> rshift >> (CODE_SIZE - FPSIZE + k2 * (int)bits_per_tag));
+            tags[k2] = (uint32_t)RIGHT_SHIFT(u1, rshift + (CODE_SIZE - FPSIZE + k2 * (int)bits_per_tag), 64);
             shift = CODE_SIZE - FPSIZE + k2 * (int)bits_per_tag - 64 + (int)rshift;
             if (shift < 0) {
-                tags[k2] |= (uint32_t)(u2 << -shift);
+                tags[k2] |= (uint32_t)LEFT_SHIFT(u2, -shift, 64);
             } else {
-                tags[k2] |= (uint32_t)(u2 >> shift);
+                tags[k2] |= (uint32_t)RIGHT_SHIFT(u2, shift, 64);
             }
             tags[k2] &= bits_mask;
         }
@@ -357,6 +356,7 @@ write_bucket(CuckooTable *ct, size_t i, uint32_t *tags) {
     /* write out the bucketbits to its place*/
     size_t bits_per_bucket = ct->bits_per_bucket;
     char *p = ct->buckets + ((bits_per_bucket * i) >> 3);
+
     if (bits_per_bucket == 16) {
         // 1 dirbits per tag
         *((uint16_t *)p) = codeword | (highbits[0] << 8) | (highbits[1] << 9) |
@@ -422,28 +422,27 @@ write_bucket(CuckooTable *ct, size_t i, uint32_t *tags) {
         u1 |= (uint64_t)(*((uint8_t *)p) & rmask);
         size_t end = bytes - 1;
         if (bytes > BYTES_PER_UINT64) {
-            u2 |= (uint64_t)(*((uint8_t *)(p + end)) & lmask) << ((end - BYTES_PER_UINT64) * BITS_PER_BYTE);
+            u2 |= (uint64_t)LEFT_SHIFT((uint64_t)(*((uint8_t *)(p + end)) & lmask), (end - BYTES_PER_UINT64) * BITS_PER_BYTE, 64);
         } else {
-            u1 |= (uint64_t)(*((uint8_t *)(p + end)) & lmask) << (end * BITS_PER_BYTE);
+            u1 |= (uint64_t)LEFT_SHIFT((uint64_t)(*((uint8_t *)(p + end)) & lmask), end * BITS_PER_BYTE, 64);
         }
-
         size_t bits_per_tag = ct->bits_per_tag;
         int shift;
         u1 |= (uint64_t)codeword << rshift;
         for (size_t k1 = 0; k1 < TAGS_PER_TABLE; k1++) {
-            u1 |= (uint64_t)highbits[k1] << (CODE_SIZE - FPSIZE + k1 * (int)bits_per_tag) << rshift;
+            u1 |= (uint64_t)LEFT_SHIFT((uint64_t)highbits[k1], CODE_SIZE - FPSIZE + k1 * bits_per_tag + rshift, 64);
             shift = CODE_SIZE - FPSIZE + k1 * (int)bits_per_tag - 64 + (int)rshift;
             if (shift < 0) {
-                u2 |= (uint64_t)highbits[k1] >> -shift;
+                u2 |= (uint64_t)RIGHT_SHIFT((uint64_t)highbits[k1], -shift, 64);
             } else {
-                u2 |= (uint64_t)highbits[k1] << shift;
+                u2 |= (uint64_t)LEFT_SHIFT((uint64_t)highbits[k1], shift, 64);
             }
         }
         for (size_t k2 = 0; k2 < bytes; k2++) {
             if (k2 < BYTES_PER_UINT64) {
-                *((uint8_t *)(p + k2)) = (uint8_t)(u1 >> (k2 * BITS_PER_BYTE));
+                *((uint8_t *)(p + k2)) = (uint8_t)RIGHT_SHIFT(u1, k2 * BITS_PER_BYTE, 64);
             } else {
-                *((uint8_t *)(p + k2)) = (uint8_t)(u2 >> ((k2 - BYTES_PER_UINT64) * BITS_PER_BYTE));
+                *((uint8_t *)(p + k2)) = (uint8_t)RIGHT_SHIFT(u2, (k2 - BYTES_PER_UINT64) * BITS_PER_BYTE, 64);
             }
         }
     }
