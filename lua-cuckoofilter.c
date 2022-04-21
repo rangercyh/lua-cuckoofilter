@@ -48,7 +48,7 @@ typedef struct cuckoo_table {
     // buckets len
     size_t len;
     char buckets[0];
-} CukooTable;
+} CuckooTable;
 
 static inline uint64_t
 upperpower2(uint64_t x) {
@@ -92,7 +92,7 @@ pack(uint8_t *in) {
 }
 
 static inline void
-gen_tables(CukooTable *ct, int base, int k, uint8_t *dst, uint16_t *idx) {
+gen_tables(CuckooTable *ct, int base, int k, uint8_t *dst, uint16_t *idx) {
     for (int i = base; i < 16; i++) {
         /* for fast comparison in binary_search in little-endian machine */
         dst[k] = i;
@@ -107,7 +107,7 @@ gen_tables(CukooTable *ct, int base, int k, uint8_t *dst, uint16_t *idx) {
 }
 
 static inline void
-init_table(CukooTable *ct) {
+init_table(CuckooTable *ct) {
     uint8_t dst[4];
     uint16_t idx = 0;
     memset(ct->dec_table, 0, sizeof(ct->dec_table));
@@ -116,7 +116,7 @@ init_table(CukooTable *ct) {
 }
 
 static inline size_t
-item_size(CukooTable *ct) {
+item_size(CuckooTable *ct) {
     size_t c = 0;
     if (ct->victim.used) {
         c = 1;
@@ -125,7 +125,7 @@ item_size(CukooTable *ct) {
 }
 
 static inline void
-reset(CukooTable *ct) {
+reset(CuckooTable *ct) {
     ct->num_items = 0;
     ct->victim.used = false;
     ct->victim.index = 0;
@@ -159,14 +159,14 @@ create_cuckoo_table(lua_State *L, size_t total_size, size_t tags_per_bucket,
     // use 7 extra bytes to avoid overrun as we always read a uint64
     size_t len = ((bits_per_bucket * num_buckets + 7 ) >> 3) + 7;
 
-    CukooTable *ct = lua_newuserdatauv(L, sizeof(CukooTable) +
+    CuckooTable *ct = lua_newuserdatauv(L, sizeof(CuckooTable) +
             sizeof(ct->buckets[0]) * len, 0);
     ct->bits_per_item = bits_per_item;
     init_table(ct);
     ct->bits_per_tag = bits_per_tag;
     ct->bits_per_bucket = bits_per_bucket;
     ct->bytes_per_bucket = bytes_per_bucket;
-    ct->bits_mask = ((1 << bits_per_tag) - 1) << FPSIZE;
+    ct->bits_mask = ((1ULL << bits_per_tag) - 1) << FPSIZE;
     ct->num_buckets = num_buckets;
     ct->len = len;
     reset(ct);
@@ -181,7 +181,10 @@ index_hash(uint32_t hv, size_t num_buckets) {
 
 static inline uint32_t
 tag_hash(uint32_t hv, size_t bits_per_item) {
-    return hv % ((1 << bits_per_item) - 1) + 1;
+    uint32_t tag;
+    tag = hv & ((1ULL << bits_per_item) - 1);
+    tag += (tag == 0);
+    return tag;
 }
 
 static inline void
@@ -204,7 +207,7 @@ alt_index(size_t index, uint32_t tag, size_t num_buckets) {
 * bucket bits = 12 codeword bits + dir bits of tag1 + dir bits of tag2 ...
 */
 static inline void
-read_bucket(CukooTable *ct, size_t i, uint32_t *tags) {
+read_bucket(CuckooTable *ct, size_t i, uint32_t *tags) {
     const char *p;  // =  buckets_ + ((kBitsPerBucket * i) >> 3);
     uint16_t codeword;
     size_t bits_per_item = ct->bits_per_item;
@@ -326,7 +329,7 @@ sort_pair(uint32_t *a, uint32_t *b) {
 * L L L L H H H H ...
 */
 static inline void
-write_bucket(CukooTable *ct, size_t i, uint32_t *tags) {
+write_bucket(CuckooTable *ct, size_t i, uint32_t *tags) {
     /* first sort the tags in increasing order */
     sort_pair(&tags[0], &tags[2]);
     sort_pair(&tags[1], &tags[3]);
@@ -447,7 +450,7 @@ write_bucket(CukooTable *ct, size_t i, uint32_t *tags) {
 }
 
 static inline bool
-insert_tag_to_bucket(CukooTable *ct, size_t i, uint32_t tag, bool kickout,
+insert_tag_to_bucket(CuckooTable *ct, size_t i, uint32_t tag, bool kickout,
         uint32_t *oldtag) {
     uint32_t tags[TAGS_PER_TABLE];
     read_bucket(ct, i, tags);
@@ -468,11 +471,10 @@ insert_tag_to_bucket(CukooTable *ct, size_t i, uint32_t tag, bool kickout,
 }
 
 static inline void
-add_impl(CukooTable *ct, size_t i, uint32_t tag) {
+add_impl(CuckooTable *ct, size_t i, uint32_t tag) {
     size_t curindex = i;
     uint32_t curtag = tag;
     uint32_t oldtag;
-
     for (uint32_t count = 0; count < MAX_CUCKOO_COUNT; count++) {
         bool kickout = count > 0;
         oldtag = 0;
@@ -494,7 +496,7 @@ add_impl(CukooTable *ct, size_t i, uint32_t tag) {
 // add an item into filter, return false when filter is full
 static int
 ladd(lua_State *L) {
-    CukooTable *ct = luaL_checkudata(L, 1, MT_NAME);
+    CuckooTable *ct = luaL_checkudata(L, 1, MT_NAME);
     // check for space
     if (ct->victim.used) {
         lua_pushboolean(L, 0);  // first result (false)
@@ -512,7 +514,7 @@ ladd(lua_State *L) {
 }
 
 static bool
-find_tag_in_buckets(CukooTable *ct, size_t i1, size_t i2, uint32_t tag) {
+find_tag_in_buckets(CuckooTable *ct, size_t i1, size_t i2, uint32_t tag) {
     uint32_t tags1[TAGS_PER_TABLE];
     uint32_t tags2[TAGS_PER_TABLE];
 
@@ -527,7 +529,7 @@ find_tag_in_buckets(CukooTable *ct, size_t i1, size_t i2, uint32_t tag) {
 // return if filter contains an item
 static int
 lcontain(lua_State *L) {
-    CukooTable *ct = luaL_checkudata(L, 1, MT_NAME);
+    CuckooTable *ct = luaL_checkudata(L, 1, MT_NAME);
     size_t len;
     const char *str = luaL_checklstring(L, 2, &len);
     size_t i1;
@@ -546,7 +548,7 @@ lcontain(lua_State *L) {
 }
 
 static bool
-delete_tag_from_bucket(CukooTable *ct, size_t i, uint32_t tag) {
+delete_tag_from_bucket(CuckooTable *ct, size_t i, uint32_t tag) {
     uint32_t tags[TAGS_PER_TABLE];
     read_bucket(ct, i, tags);
     for (size_t j = 0; j < TAGS_PER_TABLE; j++) {
@@ -562,7 +564,7 @@ delete_tag_from_bucket(CukooTable *ct, size_t i, uint32_t tag) {
 // delete item from filter, return false when item not exist
 static int
 ldelete(lua_State *L) {
-    CukooTable *ct = luaL_checkudata(L, 1, MT_NAME);
+    CuckooTable *ct = luaL_checkudata(L, 1, MT_NAME);
     size_t len;
     const char *str = luaL_checklstring(L, 2, &len);
     size_t i1;
@@ -595,7 +597,7 @@ TryEliminateVictim:
 // return num of items that filter store
 static int
 lsize(lua_State *L) {
-    CukooTable *ct = luaL_checkudata(L, 1, MT_NAME);
+    CuckooTable *ct = luaL_checkudata(L, 1, MT_NAME);
     lua_pushinteger(L, item_size(ct));
     return 1;
 }
@@ -603,14 +605,14 @@ lsize(lua_State *L) {
 // reset the fillter
 static int
 lreset(lua_State *L) {
-    CukooTable *ct = luaL_checkudata(L, 1, MT_NAME);
+    CuckooTable *ct = luaL_checkudata(L, 1, MT_NAME);
     reset(ct);
     return 0;
 }
 
 static int
 linfo(lua_State *L) {
-    CukooTable *ct = luaL_checkudata(L, 1, MT_NAME);
+    CuckooTable *ct = luaL_checkudata(L, 1, MT_NAME);
     lua_createtable(L, 0, 8);
 
     // return bytes occupancy of table
@@ -649,7 +651,7 @@ linfo(lua_State *L) {
 
 static int
 gc(lua_State *L) {
-    // CukooTable *ct = luaL_checkudata(L, 1, MT_NAME);
+    // CuckooTable *ct = luaL_checkudata(L, 1, MT_NAME);
     return 0;
 }
 

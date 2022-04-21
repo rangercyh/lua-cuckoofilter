@@ -25,4 +25,9 @@ function test()
     end
 end
 
-test()
+-- test()
+
+for i = 4, 64 do
+    local cf = cuckoofilter.new(8190, i)
+    print("add = ", i, cf:add("1"), cf:contain("1"))
+end
