@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <assert.h>
 #include <lua.h>
 #include <lauxlib.h>
 #include "komihash/komihash.h"
@@ -145,7 +144,7 @@ reset(CuckooTable *ct) {
         upperpower2(total_size/tags_per_bucket) * max_load_factor.
         cause num_buckets is always a power of two.
 */
-static inline void
+static void
 create_cuckoo_table(lua_State *L, size_t total_size, size_t tags_per_bucket,
         size_t bits_per_item) {
     size_t num_buckets = upperpower2((uint64_t)(total_size / tags_per_bucket));
@@ -174,7 +173,6 @@ create_cuckoo_table(lua_State *L, size_t total_size, size_t tags_per_bucket,
     ct->len = len;
     reset(ct);
 }
-
 
 static inline size_t
 index_hash(uint32_t hv, size_t num_buckets) {
@@ -206,7 +204,7 @@ alt_index(size_t index, uint32_t tag, size_t num_buckets) {
 /* read and decode the bucket i, pass the 4 decoded tags to the 2nd arg
 * bucket bits = 12 codeword bits + dir bits of tag1 + dir bits of tag2 ...
 */
-static inline void
+static void
 read_bucket(CuckooTable *ct, size_t i, uint32_t *tags) {
     const char *p;  // =  buckets_ + ((kBitsPerBucket * i) >> 3);
     uint16_t codeword;
@@ -327,7 +325,7 @@ sort_pair(uint32_t *a, uint32_t *b) {
 /* Tag = 4 low bits + x high bits
 * L L L L H H H H ...
 */
-static inline void
+static void
 write_bucket(CuckooTable *ct, size_t i, uint32_t *tags) {
     /* first sort the tags in increasing order */
     sort_pair(&tags[0], &tags[2]);
@@ -448,7 +446,7 @@ write_bucket(CuckooTable *ct, size_t i, uint32_t *tags) {
     }
 }
 
-static inline bool
+static bool
 insert_tag_to_bucket(CuckooTable *ct, size_t i, uint32_t tag, bool kickout,
         uint32_t *oldtag) {
     uint32_t tags[TAGS_PER_TABLE];
@@ -469,7 +467,7 @@ insert_tag_to_bucket(CuckooTable *ct, size_t i, uint32_t tag, bool kickout,
     return false;
 }
 
-static inline void
+static void
 add_impl(CuckooTable *ct, size_t i, uint32_t tag) {
     size_t curindex = i;
     uint32_t curtag = tag;
@@ -512,7 +510,7 @@ ladd(lua_State *L) {
     return 1;
 }
 
-static bool
+static inline bool
 find_tag_in_buckets(CuckooTable *ct, size_t i1, size_t i2, uint32_t tag) {
     uint32_t tags1[TAGS_PER_TABLE];
     uint32_t tags2[TAGS_PER_TABLE];
@@ -525,6 +523,13 @@ find_tag_in_buckets(CuckooTable *ct, size_t i1, size_t i2, uint32_t tag) {
            (tags2[2] == tag) || (tags2[3] == tag);
 }
 
+static inline bool
+exist(CuckooTable *ct, size_t i1, size_t i2, uint32_t tag) {
+    bool found = ct->victim.used && (tag == ct->victim.tag) &&
+            (i1 == ct->victim.index || i2 == ct->victim.index);
+    return found || find_tag_in_buckets(ct, i1, i2, tag);
+}
+
 // return if filter contains an item
 static int
 lcontain(lua_State *L) {
@@ -535,14 +540,33 @@ lcontain(lua_State *L) {
     uint32_t tag;
     generate_index_tag_hash(str, len, &i1, &tag, ct->num_buckets, ct->bits_per_item);
     size_t i2 = alt_index(i1, tag, ct->num_buckets);
-    assert(i1 == alt_index(i2, tag, ct->num_buckets));
-    bool found = ct->victim.used && (tag == ct->victim.tag) &&
-            (i1 == ct->victim.index || i2 == ct->victim.index);
-    if (found || find_tag_in_buckets(ct, i1, i2, tag)) {
-        lua_pushboolean(L, 1);
-    } else {
+    lua_pushboolean(L, exist(ct, i1, i2, tag));
+    return 1;
+}
+
+// add an item into filter, return false when filter already contains it or filter is full
+static int
+ladd_unique(lua_State *L) {
+    CuckooTable *ct = luaL_checkudata(L, 1, MT_NAME);
+    size_t len;
+    const char *str = luaL_checklstring(L, 2, &len);
+    size_t i1;
+    uint32_t tag;
+    generate_index_tag_hash(str, len, &i1, &tag, ct->num_buckets, ct->bits_per_item);
+    size_t i2 = alt_index(i1, tag, ct->num_buckets);
+    if (exist(ct, i1, i2, tag)) {
         lua_pushboolean(L, 0);
+        lua_pushliteral(L, "exist already");
+        return 2;
     }
+    // check for space
+    if (ct->victim.used) {
+        lua_pushboolean(L, 0);  // first result (false)
+        lua_pushliteral(L, "not enough space");
+        return 2;
+    }
+    add_impl(ct, i1, tag);
+    lua_pushboolean(L, 1);
     return 1;
 }
 
@@ -620,7 +644,7 @@ linfo(lua_State *L) {
 
     // return fingerprint size
     lua_pushinteger(L, ct->bits_per_item);
-    lua_setfield(L, -2, "bits_per_item");
+    lua_setfield(L, -2, "fingerprint_size");
 
     // return bits occupancy per item of table
     lua_pushinteger(L, ct->bits_per_tag);
@@ -632,7 +656,7 @@ linfo(lua_State *L) {
 
     // return num of tags that table can store
     lua_pushinteger(L, ct->num_buckets * TAGS_PER_TABLE);
-    lua_setfield(L, -2, "table_can_hold_tags_number");
+    lua_setfield(L, -2, "hashtable_capacity");
 
     // return load factor
     lua_pushnumber(L, 1.0 * item_size(ct) / (TAGS_PER_TABLE * ct->num_buckets));
@@ -649,28 +673,20 @@ linfo(lua_State *L) {
 }
 
 static int
-gc(lua_State *L) {
-    // CuckooTable *ct = luaL_checkudata(L, 1, MT_NAME);
-    return 0;
-}
-
-static int
 lmetatable(lua_State *L) {
     if (luaL_newmetatable(L, MT_NAME)) {
         luaL_Reg l[] = {
             {"add", ladd},
+            {"add_unique", ladd_unique},
             {"contain", lcontain},
             {"delete", ldelete},
             {"size", lsize},
-            {"info", linfo},
             {"reset", lreset},
+            {"info", linfo},
             { NULL, NULL }
         };
         luaL_newlib(L, l);
         lua_setfield(L, -2, "__index");
-
-        lua_pushcfunction(L, gc);
-        lua_setfield(L, -2, "__gc");
     }
     return 1;
 }
@@ -678,12 +694,19 @@ lmetatable(lua_State *L) {
 // use packed bucket in default
 static int
 lnew(lua_State *L) {
-    uint32_t total_size = luaL_checkinteger(L, 1);    // total size
+    int total_size = luaL_checkinteger(L, 1);    // total size
+    if (total_size <= 0) {
+        luaL_error(L, "total size must above 0");
+    }
+    int fp_size = luaL_optinteger(L, 2, 16);
+    if (fp_size < 4 || fp_size > 32) {
+        luaL_error(L, "fingerprint size must between [4, 32]");
+    }
     create_cuckoo_table(L,
             total_size,
             // luaL_optinteger(L, 2, 4),       // bucket size
-            4,
-            luaL_optinteger(L, 2, 16));     // fingerprint size
+            TAGS_PER_TABLE,
+            fp_size);     // fingerprint size
     lmetatable(L);
     lua_setmetatable(L, -2);
     return 1;

@@ -1,4 +1,3 @@
-local inspect = require "inspect"
 local cuckoofilter = require "cuckoofilter"
 
 local test_case = {
@@ -15,30 +14,32 @@ function test()
                 record[#record + 1] = tostring(i)
             end
         end
-        -- print(inspect(cf:info()))
         assert(cf:size() == #record, "expect size equal to record num"..#record)
         for _, v in pairs(record) do
             assert(cf:contain(v), "expect contain:"..v.."|"..f.."|"..cf:size())
             assert(cf:delete(v), "expect delete succ")
         end
-        -- print(inspect(cf:info()))
+        assert(cf:size() == 0, "expect size = 0")
+
+        cf:reset()
+        local record2 = {}
+        for i = 1, insert_num do
+            if cf:add_unique(tostring(i)) then
+                record2[#record2 + 1] = tostring(i)
+            end
+        end
+        assert(cf:size() == #record2, "expect size equal to record num"..#record2)
+        for _, v in pairs(record2) do
+            assert(cf:contain(v), "expect contain:"..v.."|"..f.."|"..cf:size())
+            assert(cf:delete(v), "expect delete succ")
+        end
         assert(cf:size() == 0, "expect size = 0")
     end
 end
 
 test()
 
--- local cf = cuckoofilter.new(8190, 23)
--- local a = {}
--- for i = 1, 50000 do
---     if cf:add(tostring(i)) then
---         a[#a + 1] = tostring(i)
---     end
--- end
--- for _, v in pairs(a) do
---     assert(cf:contain(v), "v not"..v)
--- end
-
--- local cf = cuckoofilter.new(8190, 23)
--- print("add = ", i, cf:add("1"), cf:contain("1"))
--- print(inspect(cf:info()))
+-- local cf = cuckoofilter.new(-1, 12)
+-- local cf = cuckoofilter.new(0, 12)
+-- local cf = cuckoofilter.new(1, 3)
+-- local cf = cuckoofilter.new(1, 33)
