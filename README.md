@@ -1,6 +1,6 @@
 # lua-cuckoofilter
 
-lua wrapper for [cuckoofilter](https://www.cs.cmu.edu/~dga/papers/cuckoo-conext2014.pdf)
+lua wrapper for [cuckoofilter](https://www.cs.cmu.edu/~dga/papers/cuckoo-conext2014.pdf).
 
 According to the paper [Cuckoo Filter: Practically Better Than Bloom
 ](https://www.cs.cmu.edu/~dga/papers/cuckoo-conext2014.pdf) in proceedings of ACM CoNEXT 2014 by Bin Fan, Dave Andersen and Michael Kaminsky, cuckoo filter is better than bloom filter almost in all situation. 
