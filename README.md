@@ -7,7 +7,7 @@ According to the paper [Cuckoo Filter: Practically Better Than Bloom
 
 More, cuckoofilter can dynamically add or delete item easily rather than bloomfilter. Extend Bloom Filter may can delete item, but use more memory space and have a lower performance.
 
-You can try it on this website [cuckoo_hashing_visualization]](http://www.lkozma.net/cuckoo_hashing_visualization/).
+You can try it on this website [cuckoo_hashing_visualization](http://www.lkozma.net/cuckoo_hashing_visualization/).
 
 # implementation details
 
